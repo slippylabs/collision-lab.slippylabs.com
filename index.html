@@ -1,0 +1,1216 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Collision Lab // collision-lab.slippylabs.com</title>
+<meta name="description" content="A 2D collision sandbox — SAT with minimum translation vector, GJK and EPA, ray casts and swept AABB with the tunnelling case shown — draggable, with code you can paste into your engine. Runs entirely in your browser.">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://collision-lab.slippylabs.com/">
+<meta property="og:title" content="Collision Lab // collision-lab.slippylabs.com">
+<meta property="og:description" content="A 2D collision sandbox — SAT with minimum translation vector, GJK and EPA, ray casts and swept AABB with the tunnelling case shown — draggable, with code you can paste into your engine. Runs entirely in your browser.">
+<meta property="og:image" content="https://collision-lab.slippylabs.com/og-image.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Collision Lab // collision-lab.slippylabs.com">
+<meta name="twitter:description" content="A 2D collision sandbox — SAT with minimum translation vector, GJK and EPA, ray casts and swept AABB with the tunnelling case shown — draggable, with code you can paste into your engine. Runs entirely in your browser.">
+<meta name="twitter:image" content="https://collision-lab.slippylabs.com/og-image.png">
+<link rel="icon" href="data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Ccircle%20cx%3D%2232%22%20cy%3D%2234%22%20r%3D%2222%22%20fill%3D%22%231c8a52%22%20stroke%3D%22%2339ff8f%22%20stroke-width%3D%222%22%2F%3E%3Ccircle%20cx%3D%2220%22%20cy%3D%2216%22%20r%3D%228%22%20fill%3D%22%231c8a52%22%20stroke%3D%22%2339ff8f%22%20stroke-width%3D%222%22%2F%3E%3Ccircle%20cx%3D%2244%22%20cy%3D%2216%22%20r%3D%228%22%20fill%3D%22%231c8a52%22%20stroke%3D%22%2339ff8f%22%20stroke-width%3D%222%22%2F%3E%3C%2Fsvg%3E">
+<meta name="theme-color" content="#050b10">
+<link rel="stylesheet" href="style.css?v=1">
+<script>/* perf-lite: drop blend/blur effects on low-power devices. ?fx=lite or ?fx=full to override (persisted). */
+(function(){try{var k="slippy-fx",m=location.search.match(/[?&]fx=(lite|full)/),v=m?m[1]:localStorage.getItem(k);if(m)localStorage.setItem(k,v);if(v==="lite"||(v!=="full"&&(navigator.hardwareConcurrency||8)<=2))document.documentElement.classList.add("perf-lite");}catch(e){}})();</script>
+</head>
+<body>
+
+<div class="starfield"></div>
+<div class="scanlines"></div>
+
+<main class="page-wrap">
+  <div class="hud-panel wide">
+    <div class="corner tl"></div>
+    <div class="corner tr"></div>
+    <div class="corner bl"></div>
+    <div class="corner br"></div>
+
+    <div class="callsign-row">
+      <div class="toad-avatar-wrap">
+        <svg class="toad-avatar" width="46" height="46" viewBox="0 0 64 64">
+          <circle cx="32" cy="34" r="22" fill="#1c8a52" stroke="#39ff8f" stroke-width="2"/>
+          <circle cx="20" cy="16" r="8" fill="#1c8a52" stroke="#39ff8f" stroke-width="2"/>
+          <circle cx="44" cy="16" r="8" fill="#1c8a52" stroke="#39ff8f" stroke-width="2"/>
+          <circle cx="20" cy="16" r="3.5" fill="#050b10"/>
+          <circle cx="44" cy="16" r="3.5" fill="#050b10"/>
+          <ellipse cx="24" cy="32" rx="4.5" ry="5.5" fill="#050b10"/>
+          <ellipse cx="40" cy="32" rx="4.5" ry="5.5" fill="#050b10"/>
+          <circle cx="24" cy="30" r="1.4" fill="#39ff8f"/>
+          <circle cx="40" cy="30" r="1.4" fill="#39ff8f"/>
+          <path d="M22 42 Q32 48 42 42" stroke="#050b10" stroke-width="2" fill="none" stroke-linecap="round"/>
+        </svg>
+        <div class="lock-reticle"></div>
+      </div>
+      <span class="callsign">Workshop Division // Tool</span>
+      <div class="nav-links">
+        <a href="https://projects.slippylabs.com/" class="logout-link">← Archive</a>
+      </div>
+    </div>
+
+
+    <h1>COLLISION LAB</h1>
+    <p class="subtitle">Drag two shapes into each other and watch the algorithm work: the axes it projects onto, the simplex it builds, the vector that pushes them apart by the smallest amount possible. Then take the routine away with you.</p>
+
+    <div class="filter-bar" id="mode-bar">
+      <button class="hud-tab active" data-mode="sat">SAT + MTV</button>
+      <button class="hud-tab" data-mode="gjk">GJK + EPA</button>
+      <button class="hud-tab" data-mode="ray">Ray cast</button>
+      <button class="hud-tab" data-mode="swept">Swept AABB</button>
+    </div>
+
+    <div class="cl-layout">
+      <div class="cl-canvas-wrap">
+        <canvas id="stage" width="640" height="460"
+                aria-label="Collision sandbox. Drag the shapes; the handles below the canvas do the same thing with numbers."></canvas>
+      </div>
+
+      <div class="cl-side">
+        <div class="net-grid cl-stats">
+          <div class="net-tile"><div class="net-tile-label">Result</div><div class="net-tile-value" id="stat-hit">—</div></div>
+          <div class="net-tile"><div class="net-tile-label">Depth / distance</div><div class="net-tile-value" id="stat-depth">—</div></div>
+          <div class="net-tile"><div class="net-tile-label">Normal</div><div class="net-tile-value" id="stat-normal">—</div></div>
+          <div class="net-tile"><div class="net-tile-label">Work done</div><div class="net-tile-value" id="stat-work">—</div></div>
+        </div>
+
+        <div class="tool-field-row">
+          <label class="tool-field-label" for="shape-a">Shape A</label>
+          <select class="tool-select" id="shape-a">
+            <option value="box">Box</option>
+            <option value="circle">Circle</option>
+            <option value="triangle">Triangle</option>
+            <option value="pentagon" selected>Pentagon</option>
+            <option value="hexagon">Hexagon</option>
+          </select>
+        </div>
+        <div class="tool-field-row">
+          <label class="tool-field-label" for="shape-b">Shape B</label>
+          <select class="tool-select" id="shape-b">
+            <option value="box" selected>Box</option>
+            <option value="circle">Circle</option>
+            <option value="triangle">Triangle</option>
+            <option value="pentagon">Pentagon</option>
+            <option value="hexagon">Hexagon</option>
+          </select>
+        </div>
+        <div class="tool-field-row">
+          <label class="tool-field-label" for="rot-a">Rotate A — <span id="rot-a-value">0°</span></label>
+          <div class="tool-slider-row"><input type="range" id="rot-a" min="0" max="360" step="1" value="0"></div>
+        </div>
+        <div class="tool-field-row">
+          <label class="tool-field-label" for="rot-b">Rotate B — <span id="rot-b-value">0°</span></label>
+          <div class="tool-slider-row"><input type="range" id="rot-b" min="0" max="360" step="1" value="0"></div>
+        </div>
+        <div class="tool-field-row" id="speed-row" hidden>
+          <label class="tool-field-label" for="speed-slider">Bullet speed — <span id="speed-value">900</span> px/frame</label>
+          <div class="tool-slider-row"><input type="range" id="speed-slider" min="40" max="1600" step="20" value="900"></div>
+        </div>
+        <div class="tool-checks">
+          <label class="tool-check"><input type="checkbox" id="axes-check" checked> Show the axes / simplex</label>
+          <label class="tool-check"><input type="checkbox" id="mink-check"> Show the Minkowski difference</label>
+        </div>
+
+        <div class="cl-nudge" id="nudge-pad">
+          <p class="tool-note">Drag the shapes on the canvas, or nudge the selected one:</p>
+          <div class="tool-field-row">
+            <label class="tool-field-label" for="sel-select">Nudging</label>
+            <select class="tool-select" id="sel-select">
+              <option value="a" selected>Shape A</option>
+              <option value="b">Shape B</option>
+            </select>
+          </div>
+          <div class="cl-dpad">
+            <button class="tool-btn ghost" data-nudge="0,-12" aria-label="Move up">↑</button>
+            <button class="tool-btn ghost" data-nudge="-12,0" aria-label="Move left">←</button>
+            <button class="tool-btn ghost" data-nudge="12,0" aria-label="Move right">→</button>
+            <button class="tool-btn ghost" data-nudge="0,12" aria-label="Move down">↓</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <p class="tool-note" id="explain"></p>
+
+    <h2 class="cl-h2">Every test, on this pair, right now</h2>
+    <div class="net-table-wrap">
+      <table class="net-table" id="agree-table">
+        <thead><tr><th>Test</th><th>Says</th><th>Depth</th><th>Normal</th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+    <p class="tool-note" id="agree-note"></p>
+
+    <h2 class="cl-h2">Export</h2>
+    <div class="tool-field-row">
+      <label class="tool-field-label" for="lang-select">Language</label>
+      <select class="tool-select" id="lang-select">
+        <option value="js">JavaScript</option>
+        <option value="csharp">C#</option>
+      </select>
+    </div>
+    <pre class="tool-output cl-code" id="code-out"></pre>
+    <div class="tool-controls">
+      <button class="tool-btn" id="copy-btn">Copy Code</button>
+    </div>
+    <div class="copy-toast" id="toast">Copied</div>
+    <div class="comm-window">
+      <div class="comm-portrait">
+        <svg width="36" height="36" viewBox="0 0 64 64">
+          <circle cx="32" cy="34" r="22" fill="#1c8a52" stroke="#39ff8f" stroke-width="2"/>
+          <circle cx="20" cy="16" r="8" fill="#1c8a52" stroke="#39ff8f" stroke-width="2"/>
+          <circle cx="44" cy="16" r="8" fill="#1c8a52" stroke="#39ff8f" stroke-width="2"/>
+          <circle cx="20" cy="16" r="3.5" fill="#050b10"/>
+          <circle cx="44" cy="16" r="3.5" fill="#050b10"/>
+          <ellipse cx="24" cy="32" rx="4.5" ry="5.5" fill="#050b10"/>
+          <ellipse cx="40" cy="32" rx="4.5" ry="5.5" fill="#050b10"/>
+          <circle cx="24" cy="30" r="1.4" fill="#39ff8f"/>
+          <circle cx="40" cy="30" r="1.4" fill="#39ff8f"/>
+          <path d="M22 42 Q32 48 42 42" stroke="#050b10" stroke-width="2" fill="none" stroke-linecap="round"/>
+        </svg>
+      </div>
+      <div class="comm-body">
+        <div class="comm-label"><span class="dot"></span> Incoming Transmission &mdash; Slippy</div>
+        <p>&quot;A fast bullet does not hit a thin wall. It hits both sides of it, on consecutive frames, and nothing in between.&quot;</p>
+      </div>
+    </div>
+
+    <a href="https://projects.slippylabs.com/" class="hud-btn">← Back to Archive</a>
+  </div>
+</main>
+
+
+<script>
+/* ---- 2D collision -----------------------------------------------------------
+   Two families of algorithm, answering the same question two ways.
+
+   SAT works on the projections: two convex shapes are apart exactly when some
+   axis exists on which their shadows do not overlap, and for polygons it is
+   enough to try each shape's face normals. The axis with the SMALLEST overlap
+   gives the minimum translation vector.
+
+   GJK works on the Minkowski difference A (-) B, which contains the origin
+   exactly when the shapes touch. It never builds that set; it walks a triangle
+   towards the origin using a support function. When the triangle contains the
+   origin, EPA expands it to find the nearest edge, which is the same MTV.
+
+   Both are implemented here and the page runs BOTH on every frame and prints
+   whether they agree, because two independent routes to one answer is the only
+   cheap check available in a browser. */
+
+const EPS = 1e-9;
+
+const v = (x, y) => ({ x, y });
+const sub = (a, b) => v(a.x - b.x, a.y - b.y);
+const add = (a, b) => v(a.x + b.x, a.y + b.y);
+const mul = (a, s) => v(a.x * s, a.y * s);
+const dot = (a, b) => a.x * b.x + a.y * b.y;
+const cross = (a, b) => a.x * b.y - a.y * b.x;
+const len = (a) => Math.hypot(a.x, a.y);
+const norm = (a) => { const l = len(a); return l < EPS ? v(0, 0) : v(a.x / l, a.y / l); };
+const perp = (a) => v(-a.y, a.x);
+const neg = (a) => v(-a.x, -a.y);
+
+/* A shape is either a convex polygon (counter-clockwise points) or a circle.
+   Everything below takes both, because "box" and "circle" being different code
+   paths is where collision bugs live. */
+function makePolygon(cx, cy, radius, sides, rotation) {
+  const points = [];
+  for (let i = 0; i < sides; i++) {
+    const a = rotation + (i / sides) * Math.PI * 2;
+    points.push(v(cx + Math.cos(a) * radius, cy + Math.sin(a) * radius));
+  }
+  return { type: 'poly', points };
+}
+
+function makeBox(cx, cy, w, h, rotation) {
+  const hw = w / 2;
+  const hh = h / 2;
+  const c = Math.cos(rotation);
+  const s = Math.sin(rotation);
+  const corner = (dx, dy) => v(cx + dx * c - dy * s, cy + dx * s + dy * c);
+  return { type: 'poly', points: [corner(-hw, -hh), corner(hw, -hh), corner(hw, hh), corner(-hw, hh)] };
+}
+
+function makeCircle(cx, cy, r) { return { type: 'circle', c: v(cx, cy), r }; }
+
+function centroid(shape) {
+  if (shape.type === 'circle') return shape.c;
+  let x = 0;
+  let y = 0;
+  for (const p of shape.points) { x += p.x; y += p.y; }
+  return v(x / shape.points.length, y / shape.points.length);
+}
+
+function translate(shape, d) {
+  if (shape.type === 'circle') return { type: 'circle', c: add(shape.c, d), r: shape.r };
+  return { type: 'poly', points: shape.points.map((p) => add(p, d)) };
+}
+
+/* The support function: the point of the shape furthest along a direction.
+   GJK needs nothing else about a shape, which is why it handles circles without
+   a single special case in the algorithm itself. */
+function support(shape, dir) {
+  if (shape.type === 'circle') return add(shape.c, mul(norm(dir), shape.r));
+  let best = shape.points[0];
+  let bestDot = dot(best, dir);
+  for (let i = 1; i < shape.points.length; i++) {
+    const d = dot(shape.points[i], dir);
+    if (d > bestDot) { bestDot = d; best = shape.points[i]; }
+  }
+  return best;
+}
+
+function project(shape, axis) {
+  if (shape.type === 'circle') {
+    const c = dot(shape.c, axis);
+    return { min: c - shape.r, max: c + shape.r };
+  }
+  let min = Infinity;
+  let max = -Infinity;
+  for (const p of shape.points) {
+    const d = dot(p, axis);
+    if (d < min) min = d;
+    if (d > max) max = d;
+  }
+  return { min, max };
+}
+
+/* The axes worth testing: every face normal, plus -- when a circle is involved
+   -- the direction from the circle's centre to the nearest vertex of the other
+   shape. Leaving that last one out is the classic SAT-with-circles bug: two
+   shapes that only miss near a corner are reported as colliding. */
+function candidateAxes(a, b) {
+  const axes = [];
+  const faceAxes = (shape) => {
+    if (shape.type !== 'poly') return;
+    const pts = shape.points;
+    for (let i = 0; i < pts.length; i++) {
+      const edge = sub(pts[(i + 1) % pts.length], pts[i]);
+      const n = norm(perp(edge));
+      if (len(n) > EPS) axes.push(n);
+    }
+  };
+  faceAxes(a);
+  faceAxes(b);
+  const circleAxis = (circle, other) => {
+    if (circle.type !== 'circle') return;
+    if (other.type === 'circle') {
+      const d = sub(other.c, circle.c);
+      axes.push(len(d) > EPS ? norm(d) : v(1, 0));
+      return;
+    }
+    let best = other.points[0];
+    let bestD = Infinity;
+    for (const p of other.points) {
+      const d = len(sub(p, circle.c));
+      if (d < bestD) { bestD = d; best = p; }
+    }
+    const d = sub(best, circle.c);
+    axes.push(len(d) > EPS ? norm(d) : v(1, 0));
+  };
+  circleAxis(a, b);
+  circleAxis(b, a);
+  return axes;
+}
+
+function satCollide(a, b) {
+  const axes = candidateAxes(a, b);
+  let smallest = Infinity;
+  let mtvAxis = v(0, 0);
+  for (const axis of axes) {
+    const pa = project(a, axis);
+    const pb = project(b, axis);
+    /* NOT min(aMax,bMax) - max(aMin,bMin). That is the width of the shared
+       interval, and it is the right push only when the two projections partly
+       overlap. When one is CONTAINED in the other -- a small shape deep inside
+       a big one, which is exactly the case a physics step has to recover from
+       -- the shared interval is the small shape's own width, and moving by it
+       leaves the shapes still overlapping. The distance that actually clears
+       the axis is the shorter of the two ways out. */
+    const push = Math.min(pa.max - pb.min, pb.max - pa.min);
+    if (push <= 0) {
+      return { hit: false, depth: 0, normal: axis, mtv: v(0, 0), axes, separation: -push, axis };
+    }
+    if (push < smallest) { smallest = push; mtvAxis = axis; }
+  }
+  /* Point the normal from A to B consistently, or the MTV pushes the wrong one
+     and a physics step explodes. */
+  const dir = sub(centroid(b), centroid(a));
+  const normal = dot(dir, mtvAxis) < 0 ? neg(mtvAxis) : mtvAxis;
+  return { hit: true, depth: smallest, normal, mtv: mul(normal, smallest), axes, separation: 0 };
+}
+
+/* ---- GJK ------------------------------------------------------------------- */
+
+function supportDiff(a, b, dir) { return sub(support(a, dir), support(b, neg(dir))); }
+
+/* The triple-product form of "take the perpendicular of AB that points at the
+   origin". Writing it as a cross product keeps the sign right without a case
+   for which side of the edge the origin is on. */
+function tripleProduct(a, b, c) {
+  const z = cross(a, b);
+  return v(-c.y * z, c.x * z);
+}
+
+function gjk(a, b, maxIterations = 48) {
+  let dir = sub(centroid(b), centroid(a));
+  if (len(dir) < EPS) dir = v(1, 0);
+  const simplex = [supportDiff(a, b, dir)];
+  dir = neg(simplex[0]);
+  let iterations = 1;
+  while (iterations < maxIterations) {
+    iterations++;
+    if (len(dir) < EPS) return { hit: true, simplex, iterations };
+    const p = supportDiff(a, b, dir);
+    if (dot(p, dir) < 0) return { hit: false, simplex, iterations };
+    simplex.push(p);
+    if (simplex.length === 2) {
+      const [b0, a0] = simplex;
+      const ab = sub(b0, a0);
+      const ao = neg(a0);
+      dir = tripleProduct(ab, ao, ab);
+      if (len(dir) < EPS) dir = perp(ab);
+    } else {
+      const [c0, b0, a0] = simplex;
+      const ao = neg(a0);
+      const ab = sub(b0, a0);
+      const ac = sub(c0, a0);
+      const abPerp = tripleProduct(ac, ab, ab);
+      const acPerp = tripleProduct(ab, ac, ac);
+      if (dot(abPerp, ao) > 0) {
+        simplex.splice(0, 1);          /* drop C */
+        dir = abPerp;
+      } else if (dot(acPerp, ao) > 0) {
+        simplex.splice(1, 1);          /* drop B */
+        dir = acPerp;
+      } else {
+        return { hit: true, simplex, iterations };
+      }
+    }
+  }
+  return { hit: false, simplex, iterations, exhausted: true };
+}
+
+/* EPA: grow the simplex towards the boundary of the Minkowski difference, one
+   support point at a time, always through the edge closest to the origin. */
+function epa(a, b, simplex, maxIterations = 48) {
+  if (simplex.length < 3) return null;
+  const poly = simplex.slice();
+  for (let iter = 0; iter < maxIterations; iter++) {
+    let bestIndex = 0;
+    let bestDistance = Infinity;
+    let bestNormal = v(0, 0);
+    for (let i = 0; i < poly.length; i++) {
+      const j = (i + 1) % poly.length;
+      const edge = sub(poly[j], poly[i]);
+      let n = norm(perp(edge));
+      let d = dot(n, poly[i]);
+      if (d < 0) { n = neg(n); d = -d; }
+      if (d < bestDistance) { bestDistance = d; bestNormal = n; bestIndex = j; }
+    }
+    const p = supportDiff(a, b, bestNormal);
+    const d = dot(p, bestNormal);
+    if (Math.abs(d - bestDistance) < 1e-7) {
+      return { normal: bestNormal, depth: bestDistance, iterations: iter + 1 };
+    }
+    poly.splice(bestIndex, 0, p);
+  }
+  return null;
+}
+
+/* ---- Ray casting ------------------------------------------------------------
+   Slab method against a polygon's edges: the nearest positive hit wins. The
+   normal is flipped to face the ray, so a ray started inside a wall still
+   reports a surface you can slide along. */
+function rayVsShape(origin, direction, shape, maxDistance = Infinity) {
+  const dir = norm(direction);
+  if (shape.type === 'circle') {
+    const m = sub(origin, shape.c);
+    const bq = dot(m, dir);
+    const c = dot(m, m) - shape.r * shape.r;
+    if (c > 0 && bq > 0) return null;
+    const disc = bq * bq - c;
+    if (disc < 0) return null;
+    let t = -bq - Math.sqrt(disc);
+    if (t < 0) t = -bq + Math.sqrt(disc);
+    if (t < 0 || t > maxDistance) return null;
+    const point = add(origin, mul(dir, t));
+    /* Flip it to face the ray, exactly as the polygon branch does. A ray fired
+       from inside a circle exits through a surface whose outward normal points
+       ALONG the ray, and handing that back would have the two shape types
+       disagree about what "the normal" means in the one case where it matters. */
+    let n = norm(sub(point, shape.c));
+    if (dot(n, dir) > 0) n = neg(n);
+    return { t, point, normal: n };
+  }
+  const pts = shape.points;
+  let bestT = Infinity;
+  let bestNormal = v(0, 0);
+  for (let i = 0; i < pts.length; i++) {
+    const p0 = pts[i];
+    const p1 = pts[(i + 1) % pts.length];
+    const edge = sub(p1, p0);
+    const denom = cross(dir, edge);
+    if (Math.abs(denom) < EPS) continue;       /* parallel */
+    const diff = sub(p0, origin);
+    const t = cross(diff, edge) / denom;
+    const u = cross(diff, dir) / denom;
+    if (t >= 0 && t <= maxDistance && u >= 0 && u <= 1 && t < bestT) {
+      bestT = t;
+      let n = norm(perp(edge));
+      if (dot(n, dir) > 0) n = neg(n);
+      bestNormal = n;
+    }
+  }
+  if (!isFinite(bestT)) return null;
+  return { t: bestT, point: add(origin, mul(dir, bestT)), normal: bestNormal };
+}
+
+/* ---- Swept AABB -------------------------------------------------------------
+   The reason this exists: a discrete overlap test run once per frame asks "are
+   they touching NOW", and a fast enough object is never touching on any frame
+   it is sampled -- it is in front of the wall, then behind it. The sweep asks
+   "did the path cross" instead, which cannot miss.
+
+   Standard entry/exit slab test. The near and far times per axis; the collision
+   is at the LATEST entry, and only if that is before the EARLIEST exit. */
+/* The discrete test the sweep replaces, kept so the page can show it failing --
+   and used by the sweep itself for the one case a sweep cannot answer. */
+function aabbOverlap(a, b) {
+  return a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
+}
+
+function sweptAABB(box, velocity, target) {
+  /* Already interpenetrating at the start of the frame. The textbook version of
+     this algorithm returns "no collision" here -- both entry times come out
+     negative and the guard below throws the case away -- which is a silent lie
+     to a caller whose objects are inside each other. It is reported instead,
+     with the flag that says the answer is "separate these", not "stop here":
+     an entry normal does not exist for a contact that already happened. */
+  if (aabbOverlap(box, target)) {
+    return { hit: true, time: 0, normal: v(0, 0), overlapping: true };
+  }
+  const invEntry = v(0, 0);
+  const invExit = v(0, 0);
+  for (const axis of ['x', 'y']) {
+    const size = axis === 'x' ? 'w' : 'h';
+    if (velocity[axis] > 0) {
+      invEntry[axis] = target[axis] - (box[axis] + box[size]);
+      invExit[axis] = (target[axis] + target[size]) - box[axis];
+    } else {
+      invEntry[axis] = (target[axis] + target[size]) - box[axis];
+      invExit[axis] = target[axis] - (box[axis] + box[size]);
+    }
+  }
+  const entry = v(0, 0);
+  const exit = v(0, 0);
+  for (const axis of ['x', 'y']) {
+    if (velocity[axis] === 0) {
+      /* No motion on this axis: the shapes either already overlap on it for
+         the whole sweep, or never do. -Infinity / +Infinity says exactly that
+         and keeps the min/max below honest. */
+      entry[axis] = -Infinity;
+      exit[axis] = Infinity;
+      const size = axis === 'x' ? 'w' : 'h';
+      if (box[axis] + box[size] <= target[axis] || box[axis] >= target[axis] + target[size]) {
+        return { hit: false, time: 1, normal: v(0, 0) };
+      }
+    } else {
+      entry[axis] = invEntry[axis] / velocity[axis];
+      exit[axis] = invExit[axis] / velocity[axis];
+    }
+  }
+  const entryTime = Math.max(entry.x, entry.y);
+  const exitTime = Math.min(exit.x, exit.y);
+  if (entryTime > exitTime || (entry.x < 0 && entry.y < 0) || entry.x > 1 || entry.y > 1) {
+    return { hit: false, time: 1, normal: v(0, 0) };
+  }
+  let normal;
+  if (entry.x > entry.y) normal = v(velocity.x < 0 ? 1 : -1, 0);
+  else normal = v(0, velocity.y < 0 ? 1 : -1);
+  return { hit: true, time: entryTime, normal };
+}
+
+/* ---- Minkowski difference, built the slow explicit way ----------------------
+   Not used by any test above -- it is drawn on screen, and it is what makes GJK
+   comprehensible: the origin is inside this set exactly when the shapes touch. */
+function minkowskiDifference(a, b, circleSegments = 32) {
+  const pointsOf = (shape) => {
+    if (shape.type === 'poly') return shape.points;
+    const out = [];
+    for (let i = 0; i < circleSegments; i++) {
+      const ang = (i / circleSegments) * Math.PI * 2;
+      out.push(v(shape.c.x + Math.cos(ang) * shape.r, shape.c.y + Math.sin(ang) * shape.r));
+    }
+    return out;
+  };
+  const diff = [];
+  for (const pa of pointsOf(a)) for (const pb of pointsOf(b)) diff.push(sub(pa, pb));
+  return convexHull(diff);
+}
+
+/* Andrew's monotone chain. */
+function convexHull(points) {
+  const pts = points.slice().sort((p, q) => (p.x === q.x ? p.y - q.y : p.x - q.x));
+  if (pts.length < 3) return pts;
+  const half = (input) => {
+    const out = [];
+    for (const p of input) {
+      while (out.length >= 2 && cross(sub(out[out.length - 1], out[out.length - 2]), sub(p, out[out.length - 2])) <= 0) {
+        out.pop();
+      }
+      out.push(p);
+    }
+    return out;
+  };
+  const lower = half(pts);
+  const upper = half(pts.slice().reverse());
+  lower.pop();
+  upper.pop();
+  return lower.concat(upper);
+}
+
+function pointInConvex(poly, p) {
+  for (let i = 0; i < poly.length; i++) {
+    const a = poly[i];
+    const b = poly[(i + 1) % poly.length];
+    if (cross(sub(b, a), sub(p, a)) < -EPS) return false;
+  }
+  return true;
+}
+
+/* ---- Export ---------------------------------------------------------------- */
+
+const CODE = {
+  js: `// Separating Axis Theorem for two convex polygons, with the minimum
+// translation vector. Points must be in consistent winding order.
+function satCollide(a, b) {
+  let smallest = Infinity, mtvAxis = null;
+  for (const poly of [a, b]) {
+    for (let i = 0; i < poly.length; i++) {
+      const p0 = poly[i], p1 = poly[(i + 1) % poly.length];
+      const ax = -(p1.y - p0.y), ay = p1.x - p0.x;
+      const l = Math.hypot(ax, ay);
+      if (l < 1e-9) continue;
+      const axis = { x: ax / l, y: ay / l };
+
+      let aMin = Infinity, aMax = -Infinity, bMin = Infinity, bMax = -Infinity;
+      for (const p of a) { const d = p.x * axis.x + p.y * axis.y; if (d < aMin) aMin = d; if (d > aMax) aMax = d; }
+      for (const p of b) { const d = p.x * axis.x + p.y * axis.y; if (d < bMin) bMin = d; if (d > bMax) bMax = d; }
+
+      // The shorter way out, not the width of the shared interval -- those
+      // differ whenever one projection is contained in the other, and using
+      // the shared width there leaves the shapes still overlapping.
+      const push = Math.min(aMax - bMin, bMax - aMin);
+      if (push <= 0) return null;             // a separating axis: they are apart
+      if (push < smallest) { smallest = push; mtvAxis = axis; }
+    }
+  }
+  // Point the normal from A towards B so the caller knows which way to push.
+  const ca = a.reduce((s, p) => ({ x: s.x + p.x / a.length, y: s.y + p.y / a.length }), { x: 0, y: 0 });
+  const cb = b.reduce((s, p) => ({ x: s.x + p.x / b.length, y: s.y + p.y / b.length }), { x: 0, y: 0 });
+  const flip = (cb.x - ca.x) * mtvAxis.x + (cb.y - ca.y) * mtvAxis.y < 0;
+  const n = flip ? { x: -mtvAxis.x, y: -mtvAxis.y } : mtvAxis;
+  return { depth: smallest, normal: n, mtv: { x: n.x * smallest, y: n.y * smallest } };
+}
+
+// Swept AABB. Boxes are {x, y, w, h}; velocity is the whole frame's motion.
+// Returns the fraction of the frame at which contact happens, and the face hit.
+function sweptAABB(box, vel, target) {
+  // A sweep cannot answer "when did they touch" for boxes that START touching:
+  // both entry times are negative and the classic version reports no collision,
+  // which is a silent lie. Say so instead and let the caller push them apart.
+  if (box.x < target.x + target.w && box.x + box.w > target.x &&
+      box.y < target.y + target.h && box.y + box.h > target.y) {
+    return { hit: true, time: 0, overlapping: true };
+  }
+  let xEntry, yEntry, xExit, yExit;
+  const xInvEntry = vel.x > 0 ? target.x - (box.x + box.w) : (target.x + target.w) - box.x;
+  const xInvExit  = vel.x > 0 ? (target.x + target.w) - box.x : target.x - (box.x + box.w);
+  const yInvEntry = vel.y > 0 ? target.y - (box.y + box.h) : (target.y + target.h) - box.y;
+  const yInvExit  = vel.y > 0 ? (target.y + target.h) - box.y : target.y - (box.y + box.h);
+
+  if (vel.x === 0) {
+    if (box.x + box.w <= target.x || box.x >= target.x + target.w) return { hit: false, time: 1 };
+    xEntry = -Infinity; xExit = Infinity;
+  } else { xEntry = xInvEntry / vel.x; xExit = xInvExit / vel.x; }
+
+  if (vel.y === 0) {
+    if (box.y + box.h <= target.y || box.y >= target.y + target.h) return { hit: false, time: 1 };
+    yEntry = -Infinity; yExit = Infinity;
+  } else { yEntry = yInvEntry / vel.y; yExit = yInvExit / vel.y; }
+
+  const entry = Math.max(xEntry, yEntry), exit = Math.min(xExit, yExit);
+  if (entry > exit || (xEntry < 0 && yEntry < 0) || xEntry > 1 || yEntry > 1) return { hit: false, time: 1 };
+
+  const normal = xEntry > yEntry
+    ? { x: vel.x < 0 ? 1 : -1, y: 0 }
+    : { x: 0, y: vel.y < 0 ? 1 : -1 };
+  return { hit: true, time: entry, normal };
+}
+
+// Use it like this, and a bullet can never pass through a wall:
+//   const s = sweptAABB(player, vel, wall);
+//   player.x += vel.x * s.time;
+//   player.y += vel.y * s.time;`,
+  csharp: `// Separating Axis Theorem for two convex polygons, with the MTV.
+public static bool SatCollide(Vector2[] a, Vector2[] b, out Vector2 mtv)
+{
+    mtv = Vector2.zero;
+    float smallest = float.MaxValue;
+    Vector2 mtvAxis = Vector2.zero;
+
+    foreach (var poly in new[] { a, b })
+    {
+        for (int i = 0; i < poly.Length; i++)
+        {
+            Vector2 p0 = poly[i], p1 = poly[(i + 1) % poly.Length];
+            Vector2 axis = new Vector2(-(p1.y - p0.y), p1.x - p0.x);
+            if (axis.sqrMagnitude < 1e-18f) continue;
+            axis.Normalize();
+
+            float aMin = float.MaxValue, aMax = float.MinValue;
+            float bMin = float.MaxValue, bMax = float.MinValue;
+            foreach (var p in a) { float d = Vector2.Dot(p, axis); aMin = Mathf.Min(aMin, d); aMax = Mathf.Max(aMax, d); }
+            foreach (var p in b) { float d = Vector2.Dot(p, axis); bMin = Mathf.Min(bMin, d); bMax = Mathf.Max(bMax, d); }
+
+            // The shorter way out, not the width of the shared interval.
+            float push = Mathf.Min(aMax - bMin, bMax - aMin);
+            if (push <= 0f) return false;
+            if (push < smallest) { smallest = push; mtvAxis = axis; }
+        }
+    }
+
+    Vector2 ca = Vector2.zero, cb = Vector2.zero;
+    foreach (var p in a) ca += p / a.Length;
+    foreach (var p in b) cb += p / b.Length;
+    if (Vector2.Dot(cb - ca, mtvAxis) < 0f) mtvAxis = -mtvAxis;
+    mtv = mtvAxis * smallest;
+    return true;
+}
+
+// Swept AABB. Rects are (x, y, width, height); vel is the whole frame's motion.
+public static bool SweptAABB(Rect box, Vector2 vel, Rect target, out float time, out Vector2 normal)
+{
+    time = 1f; normal = Vector2.zero;
+    // Boxes that start overlapping: a sweep has no entry time for them, and the
+    // classic version silently reports no collision. Report the contact at t=0
+    // and resolve it with SAT instead.
+    if (box.xMin < target.xMax && box.xMax > target.xMin &&
+        box.yMin < target.yMax && box.yMax > target.yMin)
+    {
+        time = 0f;
+        return true;
+    }
+    float xInvEntry = vel.x > 0f ? target.xMin - box.xMax : target.xMax - box.xMin;
+    float xInvExit  = vel.x > 0f ? target.xMax - box.xMin : target.xMin - box.xMax;
+    float yInvEntry = vel.y > 0f ? target.yMin - box.yMax : target.yMax - box.yMin;
+    float yInvExit  = vel.y > 0f ? target.yMax - box.yMin : target.yMin - box.yMax;
+
+    float xEntry, xExit, yEntry, yExit;
+    if (vel.x == 0f)
+    {
+        if (box.xMax <= target.xMin || box.xMin >= target.xMax) return false;
+        xEntry = float.NegativeInfinity; xExit = float.PositiveInfinity;
+    }
+    else { xEntry = xInvEntry / vel.x; xExit = xInvExit / vel.x; }
+
+    if (vel.y == 0f)
+    {
+        if (box.yMax <= target.yMin || box.yMin >= target.yMax) return false;
+        yEntry = float.NegativeInfinity; yExit = float.PositiveInfinity;
+    }
+    else { yEntry = yInvEntry / vel.y; yExit = yInvExit / vel.y; }
+
+    float entry = Mathf.Max(xEntry, yEntry), exit = Mathf.Min(xExit, yExit);
+    if (entry > exit || (xEntry < 0f && yEntry < 0f) || xEntry > 1f || yEntry > 1f) return false;
+
+    normal = xEntry > yEntry
+        ? new Vector2(vel.x < 0f ? 1f : -1f, 0f)
+        : new Vector2(0f, vel.y < 0f ? 1f : -1f);
+    time = entry;
+    return true;
+}`,
+};
+
+/* ==== UI ==== */
+
+const $ = (id) => document.getElementById(id);
+const canvas = $('stage');
+const ctx = canvas.getContext('2d', { alpha: false });
+
+const state = {
+  mode: 'sat',
+  a: { kind: 'pentagon', x: 250, y: 220, rot: 0 },
+  b: { kind: 'box', x: 380, y: 250, rot: 0 },
+  speed: 900,
+  axes: true,
+  minkowski: false,
+  selected: 'a',
+  rayAngle: 0.3,
+};
+
+const SIZES = { box: 96, circle: 52, triangle: 66, pentagon: 62, hexagon: 60 };
+
+function buildShape(spec) {
+  const r = SIZES[spec.kind];
+  switch (spec.kind) {
+    case 'box': return makeBox(spec.x, spec.y, r, r * 0.72, spec.rot);
+    case 'circle': return makeCircle(spec.x, spec.y, r);
+    case 'triangle': return makePolygon(spec.x, spec.y, r, 3, spec.rot);
+    case 'hexagon': return makePolygon(spec.x, spec.y, r, 6, spec.rot);
+    default: return makePolygon(spec.x, spec.y, r, 5, spec.rot);
+  }
+}
+
+function shapes() { return { a: buildShape(state.a), b: buildShape(state.b) }; }
+
+/* ---- drawing ---- */
+
+function pathShape(shape) {
+  ctx.beginPath();
+  if (shape.type === 'circle') {
+    ctx.arc(shape.c.x, shape.c.y, shape.r, 0, Math.PI * 2);
+  } else {
+    shape.points.forEach((p, i) => (i === 0 ? ctx.moveTo(p.x, p.y) : ctx.lineTo(p.x, p.y)));
+    ctx.closePath();
+  }
+}
+
+function drawShape(shape, stroke, fill) {
+  pathShape(shape);
+  if (fill) { ctx.fillStyle = fill; ctx.fill(); }
+  ctx.strokeStyle = stroke;
+  ctx.lineWidth = 2;
+  ctx.stroke();
+}
+
+function drawArrow(from, to, colour, label) {
+  ctx.strokeStyle = colour;
+  ctx.fillStyle = colour;
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(from.x, from.y);
+  ctx.lineTo(to.x, to.y);
+  ctx.stroke();
+  const ang = Math.atan2(to.y - from.y, to.x - from.x);
+  ctx.beginPath();
+  ctx.moveTo(to.x, to.y);
+  ctx.lineTo(to.x - Math.cos(ang - 0.4) * 10, to.y - Math.sin(ang - 0.4) * 10);
+  ctx.lineTo(to.x - Math.cos(ang + 0.4) * 10, to.y - Math.sin(ang + 0.4) * 10);
+  ctx.fill();
+  if (label) {
+    ctx.font = '11px Consolas, monospace';
+    ctx.fillText(label, to.x + 6, to.y - 6);
+  }
+}
+
+function clearStage() {
+  ctx.fillStyle = '#04070a';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.strokeStyle = 'rgba(57,255,143,0.07)';
+  ctx.lineWidth = 1;
+  for (let x = 0; x < canvas.width; x += 40) {
+    ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, canvas.height); ctx.stroke();
+  }
+  for (let y = 0; y < canvas.height; y += 40) {
+    ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(canvas.width, y); ctx.stroke();
+  }
+}
+
+function sweptBoxes() {
+  const box = { x: 40, y: state.b.y - 18, w: 26, h: 26 };
+  const target = { x: state.b.x - 7, y: state.b.y - 70, w: 14, h: 140 };
+  const vel = { x: state.speed, y: 0 };
+  return { box, target, vel };
+}
+
+function render() {
+  clearStage();
+  const { a, b } = shapes();
+
+  if (state.mode === 'swept') {
+    renderSwept();
+    return;
+  }
+
+  const sat = satCollide(a, b);
+  const g = gjk(a, b);
+  const e = g.hit ? epa(a, b, g.simplex) : null;
+
+  if (state.minkowski) {
+    const hull = minkowskiDifference(a, b);
+    const ox = canvas.width - 150;
+    const oy = 120;
+    ctx.save();
+    ctx.translate(ox, oy);
+    ctx.scale(0.42, 0.42);
+    ctx.beginPath();
+    hull.forEach((p, i) => (i === 0 ? ctx.moveTo(p.x, p.y) : ctx.lineTo(p.x, p.y)));
+    ctx.closePath();
+    ctx.fillStyle = 'rgba(108,200,255,0.16)';
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(108,200,255,0.8)';
+    ctx.lineWidth = 3;
+    ctx.stroke();
+    ctx.fillStyle = sat.hit ? '#39ff8f' : '#ff4655';
+    ctx.beginPath(); ctx.arc(0, 0, 9, 0, Math.PI * 2); ctx.fill();
+    ctx.restore();
+    ctx.fillStyle = 'rgba(108,200,255,0.9)';
+    ctx.font = '11px Consolas, monospace';
+    ctx.fillText('A ⊖ B — the dot is the origin', ox - 90, oy + 86);
+  }
+
+  if (state.mode === 'ray') {
+    const origin = v(state.a.x, state.a.y);
+    const dir = v(Math.cos(state.rayAngle), Math.sin(state.rayAngle));
+    drawShape(b, '#ff9130', 'rgba(255,145,48,0.14)');
+    const hit = rayVsShape(origin, dir, b);
+    const end = hit ? hit.point : add(origin, mul(dir, 900));
+    ctx.setLineDash(hit ? [] : [6, 5]);
+    drawArrow(origin, end, hit ? '#39ff8f' : 'rgba(160,200,180,0.6)');
+    ctx.setLineDash([]);
+    if (hit) {
+      ctx.fillStyle = '#39ff8f';
+      ctx.beginPath(); ctx.arc(hit.point.x, hit.point.y, 5, 0, Math.PI * 2); ctx.fill();
+      drawArrow(hit.point, add(hit.point, mul(hit.normal, 46)), '#6cc8ff', 'normal');
+      /* The reflected ray, because that is what a ray cast is usually for. */
+      const d = dot(dir, hit.normal);
+      const refl = sub(dir, mul(hit.normal, 2 * d));
+      ctx.setLineDash([3, 4]);
+      drawArrow(hit.point, add(hit.point, mul(refl, 120)), 'rgba(255,145,48,0.75)', 'bounce');
+      ctx.setLineDash([]);
+    }
+    ctx.fillStyle = 'rgba(160,200,180,0.8)';
+    ctx.font = '11px Consolas, monospace';
+    ctx.fillText('drag the green dot to move the ray origin; drag the shape to move the target', 12, canvas.height - 12);
+    ctx.fillStyle = '#39ff8f';
+    ctx.beginPath(); ctx.arc(origin.x, origin.y, 7, 0, Math.PI * 2); ctx.fill();
+    return;
+  }
+
+  drawShape(a, sat.hit ? '#ff4655' : '#39ff8f', sat.hit ? 'rgba(255,70,85,0.14)' : 'rgba(57,255,143,0.1)');
+  drawShape(b, sat.hit ? '#ff4655' : '#6cc8ff', sat.hit ? 'rgba(255,70,85,0.14)' : 'rgba(108,200,255,0.1)');
+
+  if (state.axes && state.mode === 'sat') {
+    /* Draw each candidate axis as a short bar through the middle, with the two
+       projections marked on it. This is the whole algorithm, visually. */
+    const cx = canvas.width / 2;
+    const cy = canvas.height - 44;
+    ctx.font = '10px Consolas, monospace';
+    sat.axes.slice(0, 10).forEach((axis, i) => {
+      const y = 22 + i * 13;
+      const pa = project(a, axis);
+      const pb = project(b, axis);
+      const lo = Math.min(pa.min, pb.min);
+      const hi = Math.max(pa.max, pb.max);
+      const span = Math.max(1e-6, hi - lo);
+      const X = (d) => 16 + ((d - lo) / span) * 150;
+      const overlapping = Math.min(pa.max, pb.max) > Math.max(pa.min, pb.min);
+      ctx.strokeStyle = overlapping ? 'rgba(255,70,85,0.8)' : 'rgba(57,255,143,0.85)';
+      ctx.lineWidth = 3;
+      ctx.beginPath(); ctx.moveTo(X(pa.min), y); ctx.lineTo(X(pa.max), y); ctx.stroke();
+      ctx.lineWidth = 3;
+      ctx.beginPath(); ctx.moveTo(X(pb.min), y + 4); ctx.lineTo(X(pb.max), y + 4); ctx.stroke();
+      ctx.fillStyle = 'rgba(160,200,180,0.7)';
+      ctx.fillText(overlapping ? 'overlap' : 'SEPARATED', 174, y + 5);
+    });
+    ctx.fillStyle = 'rgba(160,200,180,0.65)';
+    ctx.fillText('projections, one axis per row', 16, 14);
+    void cx; void cy;
+  }
+
+  if (state.axes && state.mode === 'gjk') {
+    const simplex = g.simplex;
+    const ox = 110;
+    const oy = canvas.height - 120;
+    ctx.save();
+    ctx.translate(ox, oy);
+    ctx.scale(0.3, 0.3);
+    ctx.strokeStyle = 'rgba(255,190,80,0.95)';
+    ctx.lineWidth = 6;
+    ctx.beginPath();
+    simplex.forEach((p, i) => (i === 0 ? ctx.moveTo(p.x, p.y) : ctx.lineTo(p.x, p.y)));
+    if (simplex.length > 2) ctx.closePath();
+    ctx.stroke();
+    ctx.fillStyle = g.hit ? '#39ff8f' : '#ff4655';
+    ctx.beginPath(); ctx.arc(0, 0, 14, 0, Math.PI * 2); ctx.fill();
+    ctx.restore();
+    ctx.fillStyle = 'rgba(255,190,80,0.9)';
+    ctx.font = '11px Consolas, monospace';
+    ctx.fillText(`simplex after ${g.iterations} iterations — ${g.hit ? 'contains' : 'does not contain'} the origin`, 16, canvas.height - 16);
+  }
+
+  if (sat.hit) {
+    const ca = centroid(a);
+    const source = state.mode === 'gjk' && e ? { normal: e.normal, depth: e.depth } : sat;
+    drawArrow(ca, add(ca, mul(source.normal, Math.max(28, source.depth * 3))), '#ffbe50',
+      `MTV ${source.depth.toFixed(2)}`);
+    /* A ghost of A pushed out by the MTV: the point of an MTV is that this is
+       exactly touching, and you can see that it is. */
+    const pushed = translate(a, mul(source.normal, -source.depth));
+    ctx.setLineDash([4, 4]);
+    drawShape(pushed, 'rgba(57,255,143,0.65)', null);
+    ctx.setLineDash([]);
+  }
+}
+
+function renderSwept() {
+  const { box, target, vel } = sweptBoxes();
+  const result = sweptAABB(box, vel, target);
+  const rect = (r, stroke, fill) => {
+    if (fill) { ctx.fillStyle = fill; ctx.fillRect(r.x, r.y, r.w, r.h); }
+    ctx.strokeStyle = stroke;
+    ctx.lineWidth = 2;
+    ctx.strokeRect(r.x, r.y, r.w, r.h);
+  };
+  rect(target, '#6cc8ff', 'rgba(108,200,255,0.14)');
+
+  /* Where the discrete test looks: start of frame, end of frame. */
+  const endBox = { ...box, x: box.x + vel.x, y: box.y + vel.y };
+  ctx.setLineDash([4, 4]);
+  rect(box, 'rgba(160,200,180,0.7)', null);
+  rect(endBox, 'rgba(160,200,180,0.7)', null);
+  ctx.setLineDash([]);
+
+  const discrete = aabbOverlap(box, target) || aabbOverlap(endBox, target);
+
+  ctx.strokeStyle = 'rgba(160,200,180,0.35)';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(box.x + box.w / 2, box.y + box.h / 2);
+  ctx.lineTo(endBox.x + endBox.w / 2, endBox.y + endBox.h / 2);
+  ctx.stroke();
+
+  if (result.hit) {
+    const stop = { ...box, x: box.x + vel.x * result.time, y: box.y + vel.y * result.time };
+    rect(stop, '#39ff8f', 'rgba(57,255,143,0.2)');
+    drawArrow(v(stop.x + stop.w / 2, stop.y + stop.h / 2),
+      v(stop.x + stop.w / 2 + result.normal.x * 50, stop.y + stop.h / 2 + result.normal.y * 50),
+      '#ffbe50', 'normal');
+  }
+
+  ctx.font = '12px Consolas, monospace';
+  ctx.fillStyle = discrete ? '#39ff8f' : '#ff4655';
+  ctx.fillText(`discrete test at frame start and end: ${discrete ? 'HIT' : 'MISS — the bullet tunnelled'}`, 16, 26);
+  ctx.fillStyle = result.hit ? '#39ff8f' : '#ff4655';
+  ctx.fillText(`swept test: ${result.hit ? `HIT at t = ${result.time.toFixed(4)} of the frame` : 'no hit'}`, 16, 46);
+  ctx.fillStyle = 'rgba(160,200,180,0.75)';
+  ctx.fillText('dashed = where a once-per-frame test looks. solid green = where contact really happens.', 16, canvas.height - 14);
+}
+
+/* ---- readouts ---- */
+
+function refresh() {
+  render();
+  const { a, b } = shapes();
+  const body = $('agree-table').querySelector('tbody');
+  body.textContent = '';
+
+  const rows = [];
+  if (state.mode === 'swept') {
+    const { box, target, vel } = sweptBoxes();
+    const s = sweptAABB(box, vel, target);
+    const endBox = { ...box, x: box.x + vel.x, y: box.y + vel.y };
+    const discrete = aabbOverlap(box, target) || aabbOverlap(endBox, target);
+    rows.push(['Discrete AABB (start + end of frame)', discrete ? 'hit' : 'MISS', '—', '—']);
+    rows.push(['Swept AABB', s.overlapping ? 'already overlapping' : s.hit ? 'hit' : 'no hit',
+      s.hit ? `t = ${s.time.toFixed(4)}` : '—',
+      s.hit && !s.overlapping ? `(${s.normal.x}, ${s.normal.y})` : '—']);
+    $('stat-hit').textContent = s.hit ? 'Hit' : 'Clear';
+    $('stat-depth').textContent = s.hit ? `t = ${s.time.toFixed(4)}` : '—';
+    $('stat-normal').textContent = s.hit ? `(${s.normal.x}, ${s.normal.y})` : '—';
+    $('stat-work').textContent = '2 slab tests';
+    $('agree-note').textContent = s.hit && !discrete
+      ? 'This is the tunnelling case: a once-per-frame overlap test finds nothing, because at neither sampled instant is the bullet inside the wall. The sweep finds the crossing exactly.'
+      : 'Wind the speed up until the discrete test starts missing — it happens the moment the bullet travels further in a frame than the wall is thick.';
+    $('explain').textContent = 'The bullet moves its whole frame of travel in one step. A discrete test asks "are these overlapping" at the two ends of that step; a swept test asks "did the path cross", which is a different and answerable question.';
+  } else if (state.mode === 'ray') {
+    const origin = v(state.a.x, state.a.y);
+    const dir = v(Math.cos(state.rayAngle), Math.sin(state.rayAngle));
+    const hit = rayVsShape(origin, dir, b);
+    rows.push(['Ray vs shape', hit ? 'hit' : 'miss', hit ? hit.t.toFixed(3) : '—',
+      hit ? `(${hit.normal.x.toFixed(3)}, ${hit.normal.y.toFixed(3)})` : '—']);
+    $('stat-hit').textContent = hit ? 'Hit' : 'Miss';
+    $('stat-depth').textContent = hit ? `${hit.t.toFixed(2)} px along` : '—';
+    $('stat-normal').textContent = hit ? `(${hit.normal.x.toFixed(2)}, ${hit.normal.y.toFixed(2)})` : '—';
+    $('stat-work').textContent = b.type === 'circle' ? '1 quadratic' : `${b.points.length} edge tests`;
+    $('agree-note').textContent = 'The surface normal is flipped to face the ray, so a ray fired from inside the shape still returns a surface you can slide along rather than one pointing into the wall.';
+    $('explain').textContent = 'Each edge is a segment; the ray is a parametric line. Two cross products give the parameter along each, and the nearest hit with both parameters in range wins.';
+  } else {
+    const sat = satCollide(a, b);
+    const g = gjk(a, b);
+    const e = g.hit ? epa(a, b, g.simplex) : null;
+    rows.push(['SAT', sat.hit ? 'overlapping' : 'apart', sat.hit ? sat.depth.toFixed(4) : '—',
+      sat.hit ? `(${sat.normal.x.toFixed(3)}, ${sat.normal.y.toFixed(3)})` : '—']);
+    rows.push(['GJK', g.hit ? 'overlapping' : 'apart', '—', `${g.iterations} iterations`]);
+    rows.push(['EPA', e ? 'overlapping' : '—', e ? e.depth.toFixed(4) : '—',
+      e ? `(${e.normal.x.toFixed(3)}, ${e.normal.y.toFixed(3)})` : '—']);
+
+    const agree = sat.hit === g.hit;
+    const depthAgree = !e || Math.abs(e.depth - sat.depth) < 0.01;
+    $('agree-note').textContent = agree && depthAgree
+      ? `SAT and GJK agree that the shapes are ${sat.hit ? 'overlapping' : 'apart'}${e ? `, and EPA's depth matches SAT's to ${Math.abs(e.depth - sat.depth).toExponential(1)} px` : ''}. Two different algorithms, one answer — which is the only check available without leaving the page.`
+      : 'SAT and GJK DISAGREE on this configuration. That is a bug, and it is worth knowing about.';
+    $('agree-note').classList.toggle('cl-bad', !(agree && depthAgree));
+
+    $('stat-hit').textContent = sat.hit ? 'Overlapping' : 'Apart';
+    $('stat-depth').textContent = sat.hit ? `${sat.depth.toFixed(3)} px` : `${sat.separation.toFixed(3)} px apart`;
+    $('stat-normal').textContent = sat.hit ? `(${sat.normal.x.toFixed(3)}, ${sat.normal.y.toFixed(3)})` : '—';
+    $('stat-work').textContent = state.mode === 'gjk'
+      ? `${g.iterations} GJK iterations`
+      : `${sat.axes.length} axes projected`;
+    $('explain').textContent = state.mode === 'gjk'
+      ? 'GJK never builds the Minkowski difference — it asks the support function for the furthest point in a direction and walks a triangle towards the origin. Tick "Show the Minkowski difference" to see the set it is searching without ever computing it.'
+      : 'SAT projects both shapes onto each candidate axis and looks for a gap. One gap is proof they are apart; no gap on any axis means they overlap, and the narrowest overlap is the cheapest way out.';
+  }
+
+  for (const cells of rows) {
+    const tr = document.createElement('tr');
+    for (const text of cells) {
+      const td = document.createElement('td');
+      td.textContent = text;
+      tr.appendChild(td);
+    }
+    body.appendChild(tr);
+  }
+
+  $('code-out').textContent = CODE[$('lang-select').value];
+}
+
+/* ---- interaction ---- */
+
+let dragging = null;
+
+function pointerPos(ev) {
+  const rect = canvas.getBoundingClientRect();
+  return v(((ev.clientX - rect.left) / rect.width) * canvas.width,
+           ((ev.clientY - rect.top) / rect.height) * canvas.height);
+}
+
+canvas.addEventListener('pointerdown', (ev) => {
+  const p = pointerPos(ev);
+  const da = Math.hypot(p.x - state.a.x, p.y - state.a.y);
+  const db = Math.hypot(p.x - state.b.x, p.y - state.b.y);
+  if (state.mode === 'swept') return;
+  dragging = da <= db ? 'a' : 'b';
+  if (Math.min(da, db) > 140) dragging = null;
+  if (dragging) {
+    state.selected = dragging;
+    $('sel-select').value = dragging;
+    canvas.setPointerCapture(ev.pointerId);
+    ev.preventDefault();
+  }
+});
+
+canvas.addEventListener('pointermove', (ev) => {
+  if (!dragging) return;
+  const p = pointerPos(ev);
+  state[dragging].x = Math.max(20, Math.min(canvas.width - 20, p.x));
+  state[dragging].y = Math.max(20, Math.min(canvas.height - 20, p.y));
+  refresh();
+});
+
+for (const type of ['pointerup', 'pointercancel']) {
+  canvas.addEventListener(type, () => { dragging = null; });
+}
+
+/* A d-pad, because two draggable shapes on a phone are two targets a thumb
+   cannot place precisely -- the same "second affordance" answer as a slider
+   that is too small to grab. */
+$('nudge-pad').addEventListener('click', (ev) => {
+  const btn = ev.target.closest('[data-nudge]');
+  if (!btn) return;
+  const [dx, dy] = btn.dataset.nudge.split(',').map(Number);
+  const s = state[state.selected];
+  s.x = Math.max(20, Math.min(canvas.width - 20, s.x + dx));
+  s.y = Math.max(20, Math.min(canvas.height - 20, s.y + dy));
+  refresh();
+});
+
+$('sel-select').addEventListener('change', () => { state.selected = $('sel-select').value; });
+$('shape-a').addEventListener('change', () => { state.a.kind = $('shape-a').value; refresh(); });
+$('shape-b').addEventListener('change', () => { state.b.kind = $('shape-b').value; refresh(); });
+$('rot-a').addEventListener('input', () => {
+  state.a.rot = (Number($('rot-a').value) * Math.PI) / 180;
+  $('rot-a-value').textContent = `${$('rot-a').value}°`;
+  refresh();
+});
+$('rot-b').addEventListener('input', () => {
+  state.b.rot = (Number($('rot-b').value) * Math.PI) / 180;
+  $('rot-b-value').textContent = `${$('rot-b').value}°`;
+  refresh();
+});
+$('speed-slider').addEventListener('input', () => {
+  state.speed = Number($('speed-slider').value);
+  $('speed-value').textContent = String(state.speed);
+  refresh();
+});
+$('axes-check').addEventListener('change', () => { state.axes = $('axes-check').checked; refresh(); });
+$('mink-check').addEventListener('change', () => { state.minkowski = $('mink-check').checked; refresh(); });
+$('lang-select').addEventListener('change', refresh);
+
+$('mode-bar').addEventListener('click', (ev) => {
+  const btn = ev.target.closest('.hud-tab');
+  if (!btn) return;
+  $('mode-bar').querySelectorAll('.hud-tab').forEach((x) => x.classList.remove('active'));
+  btn.classList.add('active');
+  state.mode = btn.dataset.mode;
+  $('speed-row').hidden = state.mode !== 'swept';
+  refresh();
+});
+
+function toast(msg) {
+  const el = $('toast');
+  el.textContent = msg;
+  el.classList.add('show');
+  setTimeout(() => el.classList.remove('show'), 1400);
+}
+$('copy-btn').addEventListener('click', async () => {
+  try {
+    await navigator.clipboard.writeText($('code-out').textContent);
+    toast('Copied');
+  } catch (err) { toast('Clipboard blocked'); }
+});
+
+window.__collision = {
+  satCollide, gjk, epa, rayVsShape, sweptAABB, aabbOverlap, support, project,
+  makeBox, makeCircle, makePolygon, minkowskiDifference, convexHull, pointInConvex,
+  translate, centroid,
+  set(opts) { Object.assign(state, opts); refresh(); return state; },
+  place(which, x, y) { state[which].x = x; state[which].y = y; refresh(); return satCollide(...Object.values(shapes())); },
+  get shapes() { return shapes(); },
+  get result() { const { a, b } = shapes(); return satCollide(a, b); },
+};
+
+/* ---- boot ---- */
+refresh();
+</script>
+<!-- Slippy Deck: floating Slippy TV + jukebox player. Renders nothing unless admin.slippylabs.com/whoami confirms a signed-in account. -->
+<script defer src="https://slippylabs.com/deck/deck.js"></script>
+<!-- Slippy Labs sitewide privacy link. Self-contained on purpose: these sites
+     share no CSS, so it carries its own styles and inherits the page's text
+     colour instead of assuming a palette. position/z-index are load bearing --
+     the HUD theme's .starfield/.scanlines are fixed at z-index 0-1 and would
+     paint straight over an unpositioned footer.
+     The .page-wrap trim below is what keeps the bar on the first screen. -->
+<div class="sl-legal"><a href="https://slippylabs.com/privacy.html">Privacy</a></div>
+<style>
+.sl-legal{box-sizing:border-box;position:relative;z-index:3;height:64px;display:flex;align-items:center;justify-content:center;margin:0;padding:0 12px;font-family:"Consolas","SFMono-Regular",Menlo,Monaco,"Courier New",monospace;font-size:11px;letter-spacing:.08em;text-transform:uppercase;opacity:.5}
+.sl-legal a{color:inherit;text-decoration:none;display:inline-flex;align-items:center;justify-content:center;min-height:44px;padding:0 14px}
+.sl-legal a:hover,.sl-legal a:focus-visible{text-decoration:underline;opacity:1}
+/* This page centres .page-wrap at min-height:100vh, which would push the bar a
+   whole screen below the fold. Give back exactly the bar height instead of
+   adding a scrollbar to a page that had none. */
+.page-wrap{min-height:calc(100vh - 64px)}
+</style>
+</body>
+</html>
